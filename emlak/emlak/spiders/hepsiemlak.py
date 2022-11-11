@@ -12,7 +12,7 @@ class HepsiemlakSpider(scrapy.Spider):
 
     def parse(self, response):
         fld_lst = {'id', 'age', 'price', 'createDate', 'updatedDate', 'mapLocation/lon', 'mapLocation/lat',
-                   'age', 'city/id', 'city/name', 'county/id', 'county/name', 'district/id', 'district/name',
+                    'city/id', 'city/name', 'county/id', 'county/name', 'district/id', 'district/name',
                    'sqm/netSqm', 'roomAndLivingRoom', 'floor/count', 'detailDescription'}
         data = json.loads(response.body)
         lst = data['realtyList']
