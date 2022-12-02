@@ -3,83 +3,25 @@ import sys
 import math
 import numpy
 import json
-import psycopg2
 
-# set boundaries in query_padmapper
-# antalya da
-MIN_LAT = 36.825
-MAX_LAT = 36.985
-MIN_LON = 30.572
-MAX_LON = 30.857
+# set boundaries
+# SARATOV + ENGELS
+MIN_LAT= 51.398221
+MAX_LAT=51.625529
+MIN_LON=45.855492
+MAX_LON=46.221607
+#51.398221 ,45.855492,51.625529,46.221607
+ #http://dev.virtualearth.net/REST/V1/Imagery/Map/road?mapArea=51.398221%20,45.855492,51.625529,46.221607&ms=900,834&format=png&key=Al7mIhL46O6xWyFKKzeLHntrBMmqTcqETIY_FzrPj3nD-U7aTESBDkt6nlqfI1e3
 
 # change these to change how detailed the generated image is
 # (1000x1000 is good, but very slow)
-MAX_X = 1000
-MAX_Y = 1000
+MAX_X = 50
+MAX_Y = 50
 
 DRAW_DOTS = True
 
 # at what distance should we stop making predictions?
-IGNORE_DIST = 0.01
-
-
-def create_connection():
-    conn = psycopg2.connect(  # to do - move to common config file
-        host="localhost",
-        database="emlak",
-        user="postgres",
-        password="123"
-    )
-    return conn
-
-
-def load_prices():
-    raw_prices = []
-    try:
-        connection = create_connection();
-        read_emlak_sql = "SELECT  eml.id, eml.room, eml.is_furnished, eml.price, eml.sqm_netsqm, " \
-                         "eml.price/eml.sqm_netsqm as sqm_price, eml.maplocation_lon, eml.maplocation_lat  " \
-                         "FROM public.f_emlak eml " \
-                         "WHERE eml.price/eml.sqm_netsqm between 40 and 500 " \
-                         "and eml.room between 1 and 5" \
-                         " and eml.is_furnished"
-        cursor = connection.cursor()
-        cursor.execute(read_emlak_sql)
-        output = cursor.fetchone()
-        while output is not None:
-            print(output)
-            row = cursor.fetchone()
-            apt_id, bedrooms, rent,   lon, lat = (int(row[0]), int(row[1]), row[5], float(row[6]), float(row[7]))
-            raw_prices.append((bedrooms, rent, lat, lon))
-
-    except (Exception, psycopg2.Error) as error:
-        print("Error while fetching data from PostgreSQL", error)
-
-    finally:
-        # closing database connection.
-        if connection:
-            cursor.close()
-            connection.close()
-    slope, y_intercept = linear_regression([(bedrooms, rent) for (bedrooms, rent, lat, lon) in raw_prices])
-    print("slope = %s" % slope)
-    print("y intercept = %s" % y_intercept)
-    x_intercept = -(y_intercept) / slope
-    print("x intercept =", x_intercept)
-    num_phantom_bedrooms = -x_intercept  # positive now
-
-    # prices = [(rent / (bedrooms + num_phantom_bedrooms), lat, lon, bedrooms) for (bedrooms, rent, lat, lon) in raw_prices] comm dk
-    prices = [(rent, lat, lon, bedrooms) for (bedrooms, rent, lat, lon) in raw_prices]
-    return prices, num_phantom_bedrooms
-
-    # For each point, use the linear regression to convert to an estimate of
-    # what a 2br would cost instead.
-    def est_2br(rent, bedrooms):
-        estimated_rent_for_this_size = y_intercept + slope * bedrooms
-        proportion_of_expected_rent = rent / estimated_rent_for_this_size
-        return proportion_of_expected_rent * (y_intercept + slope * 2)
-
-    prices = [(est_2br(rent, bedrooms), lat, lon, bedrooms) for (bedrooms, rent, lat, lon) in raw_prices]
-    return prices, slope, y_intercept
+IGNORE_DIST = 0.005
 
 
 def pixel_to_ll(x, y):
@@ -122,6 +64,43 @@ def ll_to_pixel(lat, lon):
     y = int((1 - lat_frac) * MAX_Y)
 
     return x, y
+
+
+def load_prices(fs):
+    raw_prices = []
+    seen = set()
+    for f in fs:
+        with open(f) as inf:
+            for line in inf:
+                if not line[0].isdigit():
+                    continue
+
+                rent, bedrooms, apt_id, lon, lat = line.strip().split()
+
+                if apt_id in seen:
+                    continue
+                else:
+                    seen.add(apt_id)
+
+                rent, bedrooms = int(rent), int(bedrooms)
+
+                # if rent / (bedrooms + 1) < 150:                    continue
+
+                raw_prices.append((bedrooms, rent, float(lat), float(lon)))
+
+    slope, y_intercept = linear_regression([(bedrooms, rent) for (bedrooms, rent, lat, lon) in raw_prices])
+    print
+    "slope =", slope
+    print
+    "y intercept =", y_intercept
+    x_intercept = -(y_intercept) / slope
+    print
+    "x intercept =", x_intercept
+    num_phantom_bedrooms = -x_intercept  # positive now
+
+    # prices = [(rent / (bedrooms + num_phantom_bedrooms), lat, lon, bedrooms) for (bedrooms, rent, lat, lon) in raw_prices] comm dk
+    prices = [(rent, lat, lon, bedrooms) for (bedrooms, rent, lat, lon) in raw_prices]
+    return prices, num_phantom_bedrooms
 
 
 def linear_regression(pairs):
@@ -208,10 +187,10 @@ def gaussian(prices, lat, lon, ignore=None):
     return num / dnm
 
 
-def start():
+def start(fname):
     print
     "loading data..."
-    priced_points, num_phantom_bedrooms = load_prices()
+    priced_points, num_phantom_bedrooms = load_prices([fname])
 
     print
     "computing #bedroom adjustments..."
@@ -245,6 +224,7 @@ def start():
     #        adjustment = total_actual / total_predicted
 
     adjustments[1] = 1
+
 
     "pricing all the points..."
     prices = {}
@@ -292,7 +272,7 @@ def start():
             if 0 <= x < MAX_X and 0 <= y < MAX_Y:
                 IM[x, y] = (0, 0, 0)
 
-    out_fname = "myoutput.phantom." + str(MAX_X)
+    out_fname = fname + ".phantom." + str(MAX_X)
     I.save(out_fname + ".png", "PNG")
     with open(out_fname + ".metadata.json", "w") as outf:
         outf.write(json.dumps({
@@ -307,9 +287,4 @@ def start():
 #  print "usage: python draw_heatmap.py apts.txt"
 #  else:
 # fname = sys.argv[1]
-# start("apts-sar.txt")
-
-if __name__ == "__main__":
-    # if len(sys.argv) != 2:        print("usage: python draw_heatmap.py apts.txt")
-    # fname = sys.argv[1]
-    start()
+start("apts-sar.txt")
