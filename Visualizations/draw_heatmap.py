@@ -4,6 +4,10 @@ import math
 import numpy
 import json
 import psycopg2
+import geopandas as gp
+import pandas as pnd
+from shapely.geometry import Point
+import timeit
 
 # set boundaries in query_padmapper
 # antalya da
@@ -14,8 +18,8 @@ MAX_LON = 30.857
 
 # change these to change how detailed the generated image is
 # (1000x1000 is good, but very slow)
-MAX_X = 1000
-MAX_Y = 1000
+MAX_X = 100
+MAX_Y = 100
 
 DRAW_DOTS = True
 
@@ -47,7 +51,7 @@ def load_prices():
         cursor.execute(read_emlak_sql)
         output = cursor.fetchone()
         while output is not None:
-            print(output)
+            # print(output)
             row = cursor.fetchone()
             apt_id, bedrooms, rent,   lon, lat = (int(row[0]), int(row[1]), row[5], float(row[6]), float(row[7]))
             raw_prices.append((bedrooms, rent, lat, lon))
@@ -82,7 +86,7 @@ def load_prices():
     return prices, slope, y_intercept
 
 
-def pixel_to_ll(x, y):
+def pixel_to_ll(x, y, long_first=False):
     delta_lat = MAX_LAT - MIN_LAT
     delta_lon = MAX_LON - MIN_LON
 
@@ -101,8 +105,10 @@ def pixel_to_ll(x, y):
         print
         "Mismatch: %s, %s => %s %s" % (
             x, y, calc_x, calc_y)
-
-    return lat, lon
+    if long_first:
+        return lon, lat
+    else:
+        return lat, lon
 
 
 def ll_to_pixel(lat, lon):
@@ -248,12 +254,10 @@ def start():
 
     "pricing all the points..."
     prices = {}
-    for x in range(MAX_X):
-        print
-        "  %s/%s" % (x, MAX_X)
-        for y in range(MAX_Y):
-            lat, lon = pixel_to_ll(x, y)
-            prices[x, y] = gaussian(priced_points, lat, lon)
+    gf = get_geo_frame()
+    for ind, r in gf.iterrows():
+        xys = r['xys']
+        prices[xys] = gaussian(priced_points, r['lat'], r['lon'])
 
     # determine buckets
     # we want 18 buckets (17 divisions) of equal area
@@ -276,15 +280,12 @@ def start():
 
     buckets.reverse()
 
-    print
-    "buckets: ", buckets
-
     # color regions by price
     I = Image.new('RGBA', (MAX_X, MAX_Y))
     IM = I.load()
     for x in range(MAX_X):
         for y in range(MAX_Y):
-            IM[x, y] = color(prices[x, y], buckets)
+            IM[x, y] = color(prices.get((x, y)), buckets)
 
     if DRAW_DOTS:
         for _, lat, lon, _ in priced_points:
@@ -292,7 +293,7 @@ def start():
             if 0 <= x < MAX_X and 0 <= y < MAX_Y:
                 IM[x, y] = (0, 0, 0)
 
-    out_fname = "myoutput.phantom." + str(MAX_X)
+    out_fname = "Output/myoutput.phantom." + str(MAX_X)
     I.save(out_fname + ".png", "PNG")
     with open(out_fname + ".metadata.json", "w") as outf:
         outf.write(json.dumps({
@@ -301,15 +302,27 @@ def start():
             "n": len(priced_points),
             "adjustments": adjustments}))
 
+def get_geo_frame():
+    med_sea = gp.read_file("Input/iho.zip", encoding='utf-8')
+    # mseb = med_sea[med_sea['id'] == '28B']  # .iloc[0]  # Mediterranean Sea - Eastern Basin
+    xys = []
+    for x in range(MAX_X):
+        row = [(x, y) for y in range(MAX_Y)]
+        xys.extend(row)
+    lon_lat = [pixel_to_ll(*xy, True) for xy in xys]  # list of pairs (longitude, latitude)
+    lst_lst = list(zip(*lon_lat))  # list of 2 lists, - first one is for long, second one - for lat
+    df = pnd.DataFrame({'xys': xys,'lon': lst_lst[0], 'lat': lst_lst[1], 'coords': lon_lat})  #
+    df['coords'] = df['coords'].apply(Point)
+    points = gp.GeoDataFrame(df, geometry='coords', crs=med_sea.crs)
+    # print(points)
+    df2sea = gp.tools.sjoin(points, med_sea, predicate="within", how='left')
+    df2sea.drop(df2sea[df2sea['index_right'] >= 0].index, inplace=True) # dropping rows related to the sea # pd.isna(np.nan)
 
-# if __name__ == "__main__":
-#  if len(sys.argv) != 2:
-#  print "usage: python draw_heatmap.py apts.txt"
-#  else:
-# fname = sys.argv[1]
-# start("apts-sar.txt")
+    return df2sea[['xys', 'lon', 'lat']]
+
 
 if __name__ == "__main__":
     # if len(sys.argv) != 2:        print("usage: python draw_heatmap.py apts.txt")
     # fname = sys.argv[1]
-    start()
+    timer = timeit.timeit(start, number=1)
+    print(timer)
