@@ -188,10 +188,7 @@ gaussian_negative_inverse_twice_variance_squared = -1 / (2 * gaussian_variance *
 
 
 def gaussian(prices, lat, lon, ignore=None):
-    num = 0
-    dnm = 0
-    c = 0
-
+    num, dnm, c = 0, 0, 0
     for price, plat, plon, _ in prices:
         if ignore:
             ilat, ilon = ignore
@@ -220,20 +217,51 @@ def start():
 
     adjustments = calculate_adjustments(priced_points)
 
+    prices = predict_prices(priced_points)
+
+    buckets = calculate_buckets(prices)
+
+    make_picture(adjustments, buckets, num_phantom_bedrooms, priced_points, prices)
+
+
+def make_picture(adjustments, buckets, num_phantom_bedrooms, priced_points, prices):
+    # color regions by price
+    I = Image.new('RGBA', (MAX_X, MAX_Y))
+    IM = I.load()
+    for x in range(MAX_X):
+        for y in range(MAX_Y):
+            IM[x, y] = color(prices.get((x, y)), buckets)
+    if DRAW_DOTS:
+        for _, lat, lon, _ in priced_points:
+            x, y = ll_to_pixel(lat, lon)
+            if 0 <= x < MAX_X and 0 <= y < MAX_Y:
+                IM[x, y] = (0, 0, 0)
+    out_fname = "Output/myoutput.phantom." + str(MAX_X)
+    I.save(out_fname + ".png", "PNG")
+    with open(out_fname + ".metadata.json", "w") as outf:
+        outf.write(json.dumps({
+            "num_phantom_bedrooms": num_phantom_bedrooms,
+            "buckets": buckets,
+            "n": len(priced_points),
+            "adjustments": adjustments}))
+
+
+def predict_prices(priced_points):
     "pricing all the points..."
     prices = {}
     gf = get_geo_frame()
     for ind, r in gf.iterrows():
         xys = r['xys']
         prices[xys] = gaussian(priced_points, r['lat'], r['lon'])
+    return prices
 
+
+def calculate_buckets(prices):
     # determine buckets
     # we want 18 buckets (17 divisions) of equal area
     all_priced_areas = [x for x in prices.values() if x is not None]
-
     all_priced_areas.sort()
     total_priced_area = len(all_priced_areas)
-
     buckets = []
     divisions = 17.0
     stride = total_priced_area / (divisions + 1)
@@ -245,30 +273,8 @@ def start():
             delta_i = stride + error_i
             next_i += int(delta_i)
             error_i = delta_i - int(delta_i)
-
     buckets.reverse()
-
-    # color regions by price
-    I = Image.new('RGBA', (MAX_X, MAX_Y))
-    IM = I.load()
-    for x in range(MAX_X):
-        for y in range(MAX_Y):
-            IM[x, y] = color(prices.get((x, y)), buckets)
-
-    if DRAW_DOTS:
-        for _, lat, lon, _ in priced_points:
-            x, y = ll_to_pixel(lat, lon)
-            if 0 <= x < MAX_X and 0 <= y < MAX_Y:
-                IM[x, y] = (0, 0, 0)
-
-    out_fname = "Output/myoutput.phantom." + str(MAX_X)
-    I.save(out_fname + ".png", "PNG")
-    with open(out_fname + ".metadata.json", "w") as outf:
-        outf.write(json.dumps({
-            "num_phantom_bedrooms": num_phantom_bedrooms,
-            "buckets": buckets,
-            "n": len(priced_points),
-            "adjustments": adjustments}))
+    return buckets
 
 
 def calculate_adjustments(priced_points):
