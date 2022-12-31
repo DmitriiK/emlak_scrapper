@@ -215,42 +215,10 @@ def gaussian(prices, lat, lon, ignore=None):
 
 
 def start():
-    print
-    "loading data..."
+
     priced_points, num_phantom_bedrooms = load_prices()
 
-    print
-    "computing #bedroom adjustments..."
-
-    # compute what the error would be at each data point if we priced it without being able to take it into account
-    # do this on a per-bedroom basis, so that we can compute correction factors
-    bedroom_categories = list(sorted(set(bedrooms for _, _, _, bedrooms in priced_points)))
-    adjustments = {}
-
-    # don't need that part of code - as we not investigating anything about bedroom_category
-    # for bedroom_category in bedroom_categories:
-    #    print "  %sbr..." % (bedroom_category)
-    #    total_actual = 0
-    #    total_predicted = 0
-
-    #    for i, (price, plat, plon, bedroom) in enumerate(priced_points):
-    #        if bedroom != bedroom_category:
-    #            continue
-
-    #        x, y = ll_to_pixel(plat, plon)
-    #        predicted_price = gaussian(priced_points, plat, plon, ignore=(plat, plon))
-
-    #        if predicted_price:
-    #            total_actual += price
-    #            total_predicted += predicted_price
-
-    #    if total_predicted == 0:
-    #        # we might not make any predictions, if we don't have enough data
-    #        adjustment = 1.0
-    #    else:
-    #        adjustment = total_actual / total_predicted
-
-    adjustments[1] = 1
+    adjustments = calculate_adjustments(priced_points)
 
     "pricing all the points..."
     prices = {}
@@ -301,6 +269,33 @@ def start():
             "buckets": buckets,
             "n": len(priced_points),
             "adjustments": adjustments}))
+
+
+def calculate_adjustments(priced_points):
+    print
+    "computing #bedroom adjustments..."
+    # compute what the error would be at each data point if we priced it without being able to take it into account
+    # do this on a per-bedroom basis, so that we can compute correction factors
+    bedroom_categories = list(sorted(set(bedrooms for _, _, _, bedrooms in priced_points)))
+    adjustments = {}
+    for bedroom_category in bedroom_categories:
+        total_actual, total_predicted = 0, 0
+        for i, (price, plat, plon, bedroom) in enumerate(priced_points):
+            if bedroom != bedroom_category:
+                continue
+            predicted_price = gaussian(priced_points, plat, plon, ignore=(plat, plon))
+
+            if predicted_price:
+                total_actual += price
+                total_predicted += predicted_price
+
+        if total_predicted == 0:  # we might not make any predictions, if we don't have enough data
+            adjustment = 1.0
+        else:
+            adjustment = total_actual / total_predicted
+        adjustments[bedroom_category] = adjustment
+    return adjustments
+
 
 def get_geo_frame():
     med_sea = gp.read_file("Input/iho.zip", encoding='utf-8')
