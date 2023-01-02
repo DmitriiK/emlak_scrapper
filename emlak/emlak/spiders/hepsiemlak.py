@@ -2,21 +2,25 @@ import json
 import scrapy
 import time
 from ..metadata import JsonSchema, GetParams
+from  itertools import product
 from ..items import EmlakItem
 
 
 class HepsiemlakSpider(scrapy.Spider):
     name = 'hepsiemlak'
     allowed_domains = ['hepsiemlak.com']
-    baseURL = 'https://www.hepsiemlak.com/api/realty-list/antalya-kiralik?counties=kepez,konyaalti,muratpasa&page='
+    # baseURL = 'https://www.hepsiemlak.com/api/realty-list/'
 
-    start_urls = []
-    for ifp in [GetParams.IsFurnished, GetParams.NotIsFurnished]:
-        # for igh in [GetParams.IsGazHeating, GetParams.NotIsGazHeating]:
-        url = f'https://www.hepsiemlak.com/api/realty-list/antalya-kiralik?counties=kepez,konyaalti,muratpasa&{ifp}&page=1'
-        start_urls.append(url)
-    # --https://www.hepsiemlak.com/antalya-kiralik-esyali?counties=kepez,konyaalti,muratpasa&furnishStatus=FURNISHED
+    geoURLparts = [
+        'izmir-kiralik?',  # Izmir
+        #'antalya-kiralik?counties=kepez,konyaalti,muratpasa&',  # Antalya
+        'mersin-icel-kiralik-esyali?'  # Mersin
+    ]
 
+    start_urls = [f'https://www.hepsiemlak.com/api/realty-list/{x}&{y}&page=1' for x, y in product(geoURLparts, [GetParams.IsFurnished, GetParams.NotIsFurnished])]
+    # https://www.hepsiemlak.com/antalya-kiralik-esyali?counties=kepez,konyaalti,muratpasa&furnishStatus=FURNISHED
+    # https://www.hepsiemlak.com/api/realty-list/izmir-kiralik?furnishStatus=FURNISHED&page=1
+    print (start_urls)
 
     def parse(self, response):
         data = json.loads(response.body)
